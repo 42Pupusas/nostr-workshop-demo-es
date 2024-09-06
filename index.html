@@ -1,68 +1,139 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
     <script src="https://bundle.run/browserify-cipher@1.0.1"></script>
 </head>
+
 <body>
     <script>
-        var hexToBytes = hex => Uint8Array.from( hex.match( /.{1,2}/g ).map( byte => parseInt( byte, 16 ) ) );
-        var bytesToHex = bytes => bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, "0" ), "" );
-        var { getSharedSecret, schnorr, utils } = nobleSecp256k1;
-        var sha256  = nobleSecp256k1.utils.sha256;
-        var privKey = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
-        var pubKey  = nobleSecp256k1.getPublicKey(privKey, true);
-        pubKey      = pubKey.substring( 2 );
-        console.log( pubKey );
-        var relay = "wss://relay.damus.io";
-        var socket = new WebSocket( relay );
-        socket.addEventListener('message', async function( message ) {
-            var [ type, subId, event ] = JSON.parse( message.data );
-            var { kind, content } = event || {}
-            if (!event || event === true) return;
-            console.log('message:', event);
-            if (kind === 4) {
-                content = await decrypt(privKey, event.pubkey, content);
-            }
-            console.log('content:', content);
-        });
-        socket.addEventListener('open', async function( e ) {
-            console.log( "connected to " + relay );
+        // funciones ayudante para convertir las llave privada entre strings hex y bytes
+        var hexToBytes = hex => Uint8Array.from(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+        var bytesToHex = bytes => bytes.reduce((str, byte) => str + byte.toString(16).padStart(2, "0"), "");
 
-            var subId   = bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
-            var filter  = { "authors": [ pubKey ] }
-         	 
-            var subscription = [ "REQ", subId, filter ]
+        // funciones para criptografia eliptica
+        var {getSharedSecret, schnorr, utils} = nobleSecp256k1;
+        var sha256 = nobleSecp256k1.utils.sha256;
+
+        // creamos una nueva llave aleatoria
+        var privKey = bytesToHex(nobleSecp256k1.utils.randomPrivateKey());
+        var pubKey = nobleSecp256k1.getPublicKey(privKey, true);
+        pubKey = pubKey.substring(2);
+        console.log(pubKey);
+
+        // conectamos al relay
+        // var relay = "wss://relay.damus.io";
+        var relay = "wss://relay.illuminodes.com";
+        // soporte nativo para websockets en el navegador
+        var socket = new WebSocket(relay);
+        socket.addEventListener('open', async function (e) {
+            console.log("connected to " + relay);
+
+            // creamos un id aleatorio para la subscripcion
+            var subId = bytesToHex(nobleSecp256k1.utils.randomPrivateKey()).substring(0, 16);
+            var filter = {"authors": [pubKey]}
+
+            var subscription = ["REQ", subId, filter]
             console.log('Subscription:', subscription);
 
-            socket.send(JSON.stringify( subscription ));
-            //put this stuff in the “open” event listener from earlier
+            socket.send(JSON.stringify(subscription));
+            // creemos un mensaje sencillo y publico 
             var event = {
-                "content"    : "this workshop is awesome!",
-                "created_at" : Math.floor( Date.now() / 1000 ),
-                "kind"       : 1,
-                "tags"       : [],
-                "pubkey"     : pubKey,
+                "content": "Buenisima charla y buenisimo Bootcamp",
+                "created_at": Math.floor(Date.now() / 1000),
+                "kind": 1,
+                "tags": [],
+                "pubkey": pubKey,
             }
-            var signedEvent = await getSignedEvent(event, privKey);
-            console.log('signedEvent:', signedEvent);
-            socket.send(JSON.stringify([ "EVENT", signedEvent ]));
-            //put this stuff in the “open” event listener from earlier
-            var message   = "this message is super secret!"
-            var encrypted = encrypt( privKey, pubKey, message )
+            var signedEvent = await firmarNota(event, privKey);
+            // y lo enviamos a traves del socket
+            socket.send(JSON.stringify(["EVENT", signedEvent]));
+
+            // encryptemos un mensaje privado
+            var message = "nadie podra ver este secreto!"
+            var encrypted = encrypt(privKey, pubKey, message)
+            // y creamos una nota para enviarlo
             var event2 = {
-                "content"	: encrypted,
-                "created_at" : Math.floor( Date.now() / 1000 ),
-                "kind"   	: 4,
-                "tags"   	: [ [ 'p', pubKey ] ],
-                "pubkey" 	: pubKey,
+                "content": encrypted,
+                "created_at": Math.floor(Date.now() / 1000),
+                "kind": 4,
+                "tags": [['p', pubKey]],
+                "pubkey": pubKey,
             }
-            var signedEvent2 = await getSignedEvent(event2, privKey);
-            socket.send(JSON.stringify([ "EVENT", signedEvent2 ]));
+            var signedEvent2 = await firmarNota(event2, privKey);
+            socket.send(JSON.stringify(["EVENT", signedEvent2]));
+
+            // creemos un nota "giftwrapped" (envuelta en regalo) 
+            var regalo = {
+                "content": "Feliz Navidad, este es tu regalo!",
+                "created_at": Math.floor(Date.now() / 1000),
+                "kind": 1,
+                "tags": [],
+                "pubkey": pubKey,
+            }
+            // firmamos nuestro mensaje 
+            var regaloFirmado = await firmarNota(event3, regalo);
+            // lo serializamos a texto 
+            var regaloTexto = JSON.stringify(regaloFirmado);
+            // lo encriptamos con la llave publica del receptor
+            var regaloEncriptado = encrypt(privKey, pubKey, regaloTexto);
+            // y creamos una nota para enviarlo
+            var regaloEmpacado = {
+                "content": regaloEncriptado,
+                "created_at": Math.floor(Date.now() / 1000),
+                "kind": 42,
+                "tags": [['p', pubKey]],
+                "pubkey": pubKey,
+            }
+            // firmamos nuestro mensaje
+            var empaqueFirmado = await firmarNota(regaloEmpacado, privKey);
+            // y lo enviamos a traves del WebSocket
+            socket.send(JSON.stringify(["EVENT", empaqueFirmado]));
         });
-        //put this right above your closing script tag
-        async function getSignedEvent(event, privateKey) {
+        socket.addEventListener('message', async function (message) {
+            // Los relevos pueden responder con una variedad de tipos de evento
+            // Aquí estamos interesados en los eventos que contienen notas
+            var [type, subId, event] = JSON.parse(message.data);
+            console.log('El relevo dice:', type);
+
+            // verifiquemos que el evento sea una nota
+            if (!event || event === true) return;
+            // Extraigamos lo contenidos de la nota
+            var { kind, content, pubkey, tags, created_at, sig, id } = event || {};
+            
+            // verifiquemos el contenido y la firma de la nota para asegurarnos de que no haya sido alterada
+            // serializamos la nota como creando una nueva para obtener el id y aseguramos que sea igual 
+            var serialized = await serializarId(event);
+            if (serialized !== id) {
+                console.log('El id no es valido');
+                return;
+            }
+            // y verificamos la firma para asegurarnos que si fue firmada por esa llave
+            var verified = await schnorr.verify(sig, id, pubkey);
+            if (!verified) {
+                console.log('La firma no es valida');
+                return;
+            };
+            console.log("Nueva Nota:", JSON.stringify(event, null, 2));
+            // Desencriptemos el contenido de la nota
+            if (kind === 4) {
+                content = await decrypt(privKey, event.pubkey, content);
+                console.log('Contenido Desencriptado:', content);
+            }
+            if (kind === 42) {
+                content = await decrypt(privKey, event.pubkey, content);
+                var regalo = JSON.parse(content);
+                var verified = await schnorr.verify(regalo.sig, regalo.id, regalo.pubkey);
+                if (!verified) {
+                    console.log('La firma del regalo no es valida');
+                    return;
+                };
+                console.log("Regalo Desempacado:", JSON.stringify(regalo, null, 2));
+            }
+        });
+        async function serializarId(event) {
             var eventData = JSON.stringify([
                 0,                    // Reserved for future use
                 event['pubkey'],      // The sender's public key
@@ -71,44 +142,47 @@
                 event['tags'],        // Tags identify replies/recipients
                 event['content']      // Your note contents
             ]);
-            event.id  = bytesToHex( await sha256( ( new TextEncoder().encode( eventData ) ) ) );
-            event.sig = await schnorr.sign( event.id, privateKey );
+            return bytesToHex(await sha256((new TextEncoder().encode(eventData))));
+        }
+        async function firmarNota(event, privateKey) {
+            event.id = await serializarId(event);
+            event.sig = await schnorr.sign(event.id, privateKey);
             return event;
         }
-        //put this right above your closing script tag
-        function base64ToHex( str ) {
-            var raw = atob( str );
+
+        // funciones de ayuda para encriptar y desencriptar mensajes
+        function base64ToHex(str) {
+            var raw = atob(str);
             var result = '';
-            var i; for ( i=0; i<raw.length; i++ ) {
-                var hex = raw.charCodeAt( i ).toString( 16 );
-                result += ( hex.length === 2 ? hex : '0' + hex );
+            var i; for (i = 0; i < raw.length; i++) {
+                var hex = raw.charCodeAt(i).toString(16);
+                result += (hex.length === 2 ? hex : '0' + hex);
             }
             return result;
         }
-        //put this right above your closing script tag
-        function encrypt( privkey, pubkey, text ) {
-            var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
+        function encrypt(privkey, pubkey, text) {
+            var key = nobleSecp256k1.getSharedSecret(privkey, '02' + pubkey, true).substring(2);
             var iv = window.crypto.getRandomValues(new Uint8Array(16));
-            var cipher = browserifyCipher.createCipheriv( 'aes-256-cbc', hexToBytes( key ), iv );
-            var encryptedMessage = cipher.update(text,"utf8","base64");
-            emsg = encryptedMessage + cipher.final( "base64" );
-            var uint8View = new Uint8Array( iv.buffer );
+            var cipher = browserifyCipher.createCipheriv('aes-256-cbc', hexToBytes(key), iv);
+            var encryptedMessage = cipher.update(text, "utf8", "base64");
+            emsg = encryptedMessage + cipher.final("base64");
+            var uint8View = new Uint8Array(iv.buffer);
             var decoder = new TextDecoder();
-            return emsg + "?iv=" + btoa( String.fromCharCode.apply( null, uint8View ) );
+            return emsg + "?iv=" + btoa(String.fromCharCode.apply(null, uint8View));
         }
-        //put this right above your closing script tag
-        function decrypt( privkey, pubkey, ciphertext ) {
-            var [ emsg, iv ] = ciphertext.split( "?iv=" );
-            var key = nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 );
+        function decrypt(privkey, pubkey, ciphertext) {
+            var [emsg, iv] = ciphertext.split("?iv=");
+            var key = nobleSecp256k1.getSharedSecret(privkey, '02' + pubkey, true).substring(2);
             var decipher = browserifyCipher.createDecipheriv(
                 'aes-256-cbc',
-                hexToBytes( key ),
-                hexToBytes( base64ToHex( iv ) )
+                hexToBytes(key),
+                hexToBytes(base64ToHex(iv))
             );
-            var decryptedMessage = decipher.update( emsg, "base64" );
-            dmsg = decryptedMessage + decipher.final( "utf8" );
+            var decryptedMessage = decipher.update(emsg, "base64");
+            dmsg = decryptedMessage + decipher.final("utf8");
             return dmsg;
         }
     </script>
 </body>
+
 </html>
